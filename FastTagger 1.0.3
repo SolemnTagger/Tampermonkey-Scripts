@@ -1,0 +1,890 @@
+// ==UserScript==
+// @name            FastTagger
+// @version         1.0.3
+// @author          armorfid
+// @description     Thumbnail-based tagging buttons and other minor visual enhancements for rule34.xxx
+// @namespace       rule34
+// @include         *://rule34.xxx/index.php?page=post&s=list&tags=*
+// @include         *://rule34.xxx/index.php?page=post&s=view&id=*
+// @grant           GM_getValue
+// @grant           GM_setValue
+// @require         http://ajax.googleapis.com/ajax/libs/jquery/1.7.1/jquery.min.js
+// @require         http://ajax.googleapis.com/ajax/libs/jqueryui/1.8.16/jquery-ui.min.js
+// @downloadURL     https://gist.github.com/armorfid/daa4e10f97d16005bcd0f624a15446eb/raw/FastTagger.user.js
+// @updateURL       https://gist.github.com/armorfid/daa4e10f97d16005bcd0f624a15446eb/raw/FastTagger.user.js
+// ==/UserScript==
+
+// *******************************************************************************
+// * NOTE: Only modify parts inside ###'s, otherwise you could break the script. *
+// *******************************************************************************
+
+var isError; var buttontags; try { buttontags = [
+//##########################################################################################
+//##########################################################################################
+//###  ________                                                                          ###
+//### |  TAGS  |                                                                         ###
+//###  ¯¯¯¯¯¯¯¯                                                                          ###
+//###   SYNTAX: ["text displayed on button", "tag(s) to add to post"],                   ###
+//###                                                                                    ###
+//###   IMPORTANT:                                                                       ###
+//###   You must add a comma (,) at the end of each line except the last one, or         ###
+//###   you will break the script.                                                       ###
+//###                                                                                    ###
+
+["solo_male", "male solo solo_male"],
+["futa", "futanari"],
+["yaoi", "gay yaoi"]
+
+//###                                                                                    ###
+//##########################################################################################
+//##########################################################################################
+]; } catch (error) { isError = true; err("syn"); }
+
+
+//##########################################################################################
+//##########################################################################################
+//###  __________                                                                        ###
+//### | SETTINGS |                                                                       ###
+//###  ¯¯¯¯¯¯¯¯¯¯                                                                        ###
+//###   Edit these to your liking.                                                       ###
+//###   true = ON, false = OFF                                                           ###
+//###                                                                                    ###
+
+var custom_button = false; // Show custom button that prompts for tags to add
+var custom_text = "Custom"; // Text to show on custom tags button
+
+var hide_tagged = true; // Hide thumnails once they have been tagged
+var hide_delay = 0.25; // Delay in seconds it takes to hide thumbnails
+
+var hide_blacklisted = true; // Hide blacklisted images
+
+var hide_deleted = true; // Hide deleted images
+
+var bigger_pagebuttons = true; // Make page buttons 50% bigger
+
+var refresh_onsave = true; // Refresh page when FastTagger settings are saved
+
+//###                                                                                    ###
+//##########################################################################################
+//##########################################################################################
+
+
+//-----------------------------------------------------------------------------------------------------------------------------
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Functions ///////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+	// Custom stylesheet for more efficient viewing
+	function stylesheet()
+	{
+		var style = document.createElement("style");
+		style.textContent =
+
+		'div#post-list div.sidebar { width: 16% } \n' +
+		'div#post-list div.content { width: 82% } \n' +
+		'div#post-list div.content > span { white-space: normal !important; } \n' +
+		'div#post-list span.thumb { width: 165px; height: auto; font-size: 0; margin: 0 0 10px 0; padding: 3px 0 0 0; float: none; vertical-align: top; } \n' +
+		'div#post-list span.thumb div.buttontags { font-size: 8pt } \n' +
+		'div#post-list span.thumb div.buttontags button { font-size: 8pt; cursor: pointer; } \n' +
+		'div#post-list span.blacklisted-image {' + ((hide_blacklisted) ? ' display: none;' : '') + ' height: 165px; margin-top: 3px; padding: 0; } \n' +
+		'div#forum.response-list div.post { width: 100% } \n' +
+		'div#forum.response-list div.post div.author { padding: 0 1em 0.5em 0 } \n' +
+		'div#forum.response-list div.post div.content { width: 77%; padding: 0 0 0 15px; } \n' +
+		'div#comment-list > div.post { width: 100% } \n' +
+		'div#comment-list > div.post > div.col2 { min-width: 50em; float: none; overflow: hidden; width: auto; } \n' +
+		//'div#comment-list > div.post > div.col2 div.tags { width: 500px !important } \n' +
+		'div.response-list > div.post { min-width: 45em; float: none; } \n' +
+		'div.response-list > div.post > div.content { float: none; overflow: hidden; width: auto; } \n' +
+		'div#paginator { padding: 0; ' + ((bigger_pagebuttons) ? 'font-size: 1.5em; } div#paginator a { padding: 2px 8px ' : '') + '} \n';
+
+		$('head').append(style);
+	}
+
+	function err(msg)
+	{
+		switch(msg)
+		{
+			case "syn":
+				alert("Syntax error: \nMake sure you haven't forgotten or deleted any brackets ([]), quotes (\"), or commas (,) in the Tags section."); return;
+
+			case "len":
+				alert("Improper length: \nMake sure there is 1 or more elements ([\"name\", \"tags\"]) inside the Tags section."); return;
+
+			case "sublen":
+				alert("Improper line length: \nMake sure there are exacty 2 elements for each line. \nRefer to syntax help inside the Tags section."); return;
+
+			case "type":
+				alert("Line syntax error: \nMake sure you haven't forgotten the quotes (\") surrounding the button name and tags. \nRefer to syntax help inside the Tags section."); return;
+
+			case "strlen":
+				alert("Empty elements: \nMake sure you wrote something (other than spaces) for tags, and button names if applicable."); return;
+
+			default:
+				alert("Error: \n"+msg); return;
+		}
+	}
+
+	function isLoggedIn()
+	{
+		return (document.cookie.indexOf("pass_hash=") != -1 || document.getElementById("my-favorites-container"));
+	}
+
+	var pgntr = 0; // Don't touch this value
+
+	// Makes sure all edit requests have been sent before showing page navigation menu
+	function paginator(status)
+	{
+		pgntr += (status) ? -1 : 1;
+
+		if (pgntr == 0)
+			$('#paginator').css('visibility', 'visible');
+		else
+			$('#paginator').css('visibility', 'hidden');
+
+		if (pgntr < 0)
+			err("paginator < 0");
+	}
+
+	// Executes when a tag button is pressed; creates an hidden iframe within the thumb's span, loads its post page's necessary code into an iframe, adds the tag(s), and sends edit request
+	function press(element, custom)
+	{
+		if (!isLoggedIn())
+		{
+			alert("You must be logged in to edit tags.");
+			return;
+		}
+
+		paginator(false);
+
+		var add = (typeof custom == "string") ? custom : buttontags[element.index][1];
+
+		if(!$.trim(add).length)
+			err("strlen");
+
+		/*// Defines tag(s) based on the button pressed
+		switch(button)
+		{
+			case "s":
+				add = "solo_male solo male";
+				break;
+			case "y":
+				add = "yaoi";
+				break;
+			case "f":
+				add = "futanari";
+				break;
+			default:
+				err("button = undefined value");
+				return;
+		}*/
+
+		var div = element.parentNode.parentNode;
+		//$('button', div).css('visibility', 'hidden');
+		$(div).css('visibility', 'hidden');
+
+		var t = div.parentNode;
+		var id = t.id.substring(1);
+
+		// Acquire edit form from the post page
+		$.get('index.php?page=post&s=view&id='+id, function (data)
+		{
+			//var dat = data.toString();
+			//var doctype = dat.substring(dat.indexOf('<!DOCTYPE'), dat.indexOf('<head>') - 1);
+			//var head = dat.substring(dat.indexOf('<head>'), dat.indexOf('<body>') - 1);
+			//var head = '<head><script src="http://rule34.booru.org/script/application.js.php?1" type="text/javascript"></script></head>';
+			//var index = dat.indexOf('<form method="post" action="./public/edit_post.php" id="edit_form"');
+			//var form = dat.substring(index, dat.indexOf('</form>', index) + 6);
+
+			var match = /(\<form (?:.+ )?id="edit_form".*?\>[\S\s]+?\<\/form\>)/i.exec(data.toString());
+
+			if (match != null)
+			{
+				/*
+
+				// *** <retarded> ***
+				var ifrm = document.createElement("iframe");
+				$(ifrm).css('display', 'none');
+				t.appendChild(ifrm);
+				var idoc = ifrm.contentWindow.document;
+				idoc.open();
+				idoc.write(form);
+				idoc.close();
+				// *** </retarded> ***
+
+				idoc.getElementById("tags").innerHTML += " " + add; // I spent 2 hours trying to find why the script didn't work before I noticed I had forgotten THAT line, a.k.a. the reason behind the whole script...
+
+				$('#pconf', idoc).val(1); // Magic *snort *snort*
+
+				*/
+
+				// Best wrapped for further shenanigans
+				var editForm = $('#edit_form', $('<div>' + match[1] + '</div>'));
+
+				$('#tags', editForm).html(function (i, tags)
+				{
+					var addArr = add.split(" ").filter(function(s){ return (s != "" && s.substr(0,1) != "-") });
+					var removeArr = $.map(add.split(" ").filter(function(s){ return (s.length > 1 && s.substr(0,1) == "-") }), function(s){ return s.substr(1).toLowerCase() });
+					var tagsArr = tags.split(" ").filter(function(s){ return (s != "" && removeArr.indexOf(s.toLowerCase()) == -1) });
+					return tagsArr.join(" ") + " " + addArr.join(" ");
+				});
+
+				$('#pconf', editForm).val(1);
+
+				// Send edit request to server
+				$.post(
+					"public/edit_post.php",
+					// $('#edit_form', idoc).serialize(),
+					editForm.serialize(),
+					/*{
+						rating: post.attr('rating'),
+						title: null,
+						parent: post.attr('parent_id'),
+						source: post.attr('source'),
+						tags: post.attr('tags') + " " + add,
+						id: id,
+						lupdated: post.attr('change'),
+						pconf: 1
+					},*/
+					function (data, textStatus)
+					{
+						if (textStatus == "success")
+						{
+							if	(hide_tagged)
+							{
+								//var offset = parseInt($(t).css('width')) / -2;
+								$('img', t).animate({width:'0'}, hide_delay*1000);
+
+								// Only way to "simulate" a width change for userstyles with "width: ___ !important;"
+								//marginLeft: offset+'px', marginRight: offset+'px'
+
+								$(t).animate({width:'0', opacity:'0'}, hide_delay*1000, function()
+								{
+									if (div != null) t.removeChild(div);
+									// t.removeChild(ifrm);
+									$(t).hide();
+									paginator(true);
+								});
+							}
+							else
+							{
+								t.removeChild(ifrm);
+								paginator(true);
+							}
+						}
+					}
+				);
+			}
+		});
+	}
+
+	// The following is very shitty
+	function settingsMenu()
+	{
+		var menu = document.createElement("div");
+		menu.id = "fasttagger-menu"
+		$(menu).css({backgroundColor: 'rgba(0,0,0,0.5)', position: 'fixed', height: '100%', width: '100%', top: '0', left: '0', display: "table"});
+
+		var addBtnURI = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAIAAAAC64paAAAACXZwQWcAAAAUAAAAFACjOyrRAAAAPklEQVQ4y2NU2ujDQC5gIlvnoNV812/zXb/NQ87ZtNXMiJxI8AcPBChv8qWBzWgA4hBkq6jp5yGqmXEE5mcAfqMOXXPajlQAAAAldEVYdGNyZWF0ZS1kYXRlADIwMTEtMTItMDFUMjA6MDI6NTctMDg6MDDK4GNkAAAAJXRFWHRtb2RpZnktZGF0ZQAyMDExLTEyLTAxVDIwOjAyOjU3LTA4OjAwlVEVUAAAAABJRU5ErkJggg==";
+
+		var removeBtnURI = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAIAAAAC64paAAAACXZwQWcAAAAUAAAAFACjOyrRAAAAaklEQVQ4y+WTUQqAMAxD015j97+ZnmP+DTVJBw5BcH8jfay8drHh+ckF9kNw692VcpQcS15GF3iPkI+M6yjQbTPvSAAh58ydMwln+1YqSbwyZydsDp8NOf8aZrcFnzVZ82JJpFsZxQ//8wGx0zoEaNMBSAAAACV0RVh0Y3JlYXRlLWRhdGUAMjAxMS0xMi0wMVQyMDowMzowMC0wODowMKhlOLAAAAAldEVYdG1vZGlmeS1kYXRlADIwMTEtMTItMDFUMjA6MDM6MDAtMDg6MDD31E6EAAAAAElFTkSuQmCC";
+
+		var tableStyle = document.createElement("style");
+		tableStyle.type = "text/css";
+		tableStyle.innerHTML = '.ft-table { border-collapse: collapse; width: 100%; margin-bottom: 15px; } \n' +
+							   //'.ft-table, .ft-table td, .ft-table th { border: 1px solid black; } ' +
+							   '.ft-table th { text-align: center; } \n' +
+							   '.ft-table abbr { cursor: help; } \n' +
+							   '.ft-table td:nth-of-type(1), .ft-table th:nth-of-type(1) { width: 25%; padding: 1px 2px; height: 20px; } \n' +
+							   '.ft-table td:nth-of-type(2), .ft-table th:nth-of-type(2) { width: 75%; padding: 1px 2px; height: 20px; } \n' +
+							   '.ft-table td input { width: 97.5%; height: 90%; padding: 0 2px; } \n' +
+							   '.ft-table td button { margin: 0 -1px; } \n' +
+							   '.ft-table td.btn-table { padding: 1px 2px; display: block; width: 20px; } \n' +
+							   '.ft-table td.btn-table a { display: block; color: white; height: 20px; width: 20px; text-align: center; } \n' +
+							   '.ft-table td.btn-table a:hover { opacity: 1.0; cursor: pointer; } \n' +
+							   '.ft-table td.btn-add a { background: url(' + addBtnURI + ') no-repeat; opacity:0.30; } \n' +
+							   '.ft-table td.btn-delete a { background: url(' + removeBtnURI + ') no-repeat; opacity:0.15; } \n' +
+							   '#fasttagger-options { list-style-type: none; margin-bottom: 10px; } \n' +
+							   '#fasttagger-options li { margin: 0; padding: 6px 0; } \n' +
+							   'input[type^="checkbox"] { margin: 0 2px 5px 0; position: relative; top: 1px; }';
+
+		menu.appendChild(tableStyle);
+
+		var midMenu = document.createElement("div");
+		$(midMenu).css({display: 'table-cell', verticalAlign: 'middle', height: '100%'});
+
+		var mainMenu = document.createElement("div");
+		$(mainMenu).css({backgroundColor: 'white', width: '512px', margin: 'auto', padding: '20px', overflow: 'auto',  maxHeight: '90%', border: '5px solid black', borderRadius: '25px'});
+
+		var tableTags = document.createElement("table");
+		tableTags.className = "ft-table";
+
+		var tHead = document.createElement("thead");
+		tHead.innerHTML = '<tr><th>Button text</th><th>Tags <abbr title="You can remove tags from posts by adding a minus (-) in front of the tag, like when excluding tags from search, ex.: female -girl">(?)</abbr></th></tr>';
+		$(tHead).css('text-align', 'center');
+
+		var tBody = document.createElement("tbody");
+
+		for (i = 0; i < buttontags.length; i++)
+		{
+			var tRow = document.createElement("tr");
+
+			for (j = 0; j < buttontags[i].length; j++)
+			{
+				var tCell = document.createElement("td");
+
+				var tInput = document.createElement("input");
+				tInput.id = "button-f"+j;
+				tInput.type = "text";
+				tInput.name = tInput.id;
+				tInput.value = buttontags[i][j];
+
+				if (j == 1)
+					$(tInput).css('font-family', 'monospace');
+
+				tCell.appendChild(tInput);
+				tRow.appendChild(tCell);
+			}
+
+			var btnDelete = document.createElement("td");
+			btnDelete.className = "btn-table btn-delete";
+
+			if (i > 0)
+			{
+				var btnDeleteLnk = document.createElement("a");
+				btnDeleteLnk.title = "Remove";
+				//btnDeleteLnk.href = "#";
+				//btnDeleteLnk.innerHTML = "×";
+				btnDelete.appendChild(btnDeleteLnk);
+				btnDeleteLnk.addEventListener("click", function() {
+					$(this.parentNode.parentNode).animate({opacity:'0'}, 500, function()
+					{
+						this.parentNode.removeChild(this);
+					});
+				}, false);
+			}
+
+			tRow.appendChild(btnDelete);
+
+			tBody.appendChild(tRow);
+		}
+
+		var trBtnAdd = document.createElement("tr");
+		//trBtnAdd.appendChild(document.createElement("td"));
+		//trBtnAdd.appendChild(document.createElement("td"));
+
+		/*tBtnAdd = document.createElement("td");
+		tBtnAdd.setAttribute("colspan", "2");
+
+		btnAdd = document.createElement("button");
+		//btnAdd.type = "button";
+		$(btnAdd).css('cursor', 'pointer');
+		btnAdd.innerHTML = "+";
+
+		tBtnAdd.appendChild(btnAdd);
+		trBtnAdd.appendChild(tBtnAdd);*/
+
+		var btnAdd = document.createElement("td");
+		btnAdd.className = "btn-table btn-add";
+
+		var btnAddLnk = document.createElement("a");
+		btnAddLnk.title = "Add";
+		//btnAddLnk.href = "#";
+		//btnAddLnk.innerHTML = "+";
+		btnAddLnk.addEventListener("click", function() {
+
+			tRow = document.createElement("tr");
+			for (i = 0; i < 2; i++)
+			{
+				tCell = document.createElement("td");
+				tInput = document.createElement("input");
+				tInput.id = "button-f"+i;
+				tInput.name = tInput.id;
+				tInput.type = "text";
+				if(i == 1) $(tInput).css('font-family', 'monospace');
+				tCell.appendChild(tInput);
+				tRow.appendChild(tCell);
+			}
+
+			btnDelete = document.createElement("td");
+			btnDelete.className = "btn-table btn-delete";
+
+			btnDeleteLnk = document.createElement("a");
+			btnDeleteLnk.title = "Remove";
+			//btnDeleteLnk.href = "#";
+			btnDelete.appendChild(btnDeleteLnk);
+			btnDeleteLnk.addEventListener("click", function() {
+				$(this.parentNode.parentNode).animate({opacity:'0'}, 500, function()
+				{
+					this.parentNode.removeChild(this);
+				});
+			}, false);
+
+			tRow.appendChild(btnDelete);
+			$(tRow).css('opacity', '0');
+			$(this.parentNode.parentNode).before(tRow);
+			$(tRow).animate({opacity:'1'}, 500);
+
+		}, false);
+
+		btnAdd.appendChild(btnAddLnk);
+
+		trBtnAdd.appendChild(btnAdd);
+
+		tBody.appendChild(trBtnAdd);
+
+		tableTags.appendChild(tHead);
+		tableTags.appendChild(tBody);
+		mainMenu.appendChild(tableTags);
+
+		$(tableTags).before("<center><h3>FastTagger Settings</h3></center><br/>");
+
+		var ulOptions = document.createElement("ul");
+		ulOptions.id = "fasttagger-options";
+
+		var liOption = document.createElement("li");
+
+		var customBtnChk = document.createElement("input");
+		customBtnChk.setAttribute("type", "checkbox");
+		customBtnChk.name = "custom_button";
+		//customBtnChk.value = "yes";
+		customBtnChk.checked = custom_button;
+		liOption.appendChild(customBtnChk);
+		$(customBtnChk).after(" Add custom button to specify tags on-the-spot");
+		ulOptions.appendChild(liOption);
+
+		var customBtnText = document.createElement("input");
+		customBtnText.name = "custom_text";
+		customBtnText.size = 16;
+		customBtnText.value = custom_text;
+		$(customBtnText).css({fontStyle:'italic', padding:'1px'});
+		liOption.appendChild(customBtnText);
+		$(customBtnText).before("<br/>&nbsp;└ Custom button text: ");
+		ulOptions.appendChild(liOption);
+
+		liOption = document.createElement("li");
+
+		var hideTaggedChk = document.createElement("input");
+		hideTaggedChk.setAttribute("type", "checkbox");
+		hideTaggedChk.name = "hide_tagged";
+		hideTaggedChk.checked = hide_tagged;
+		liOption.appendChild(hideTaggedChk);
+		$(hideTaggedChk).after(" Hide thumbnails once they have been tagged");
+		ulOptions.appendChild(liOption);
+
+		var hideTaggedTime = document.createElement("input");
+		hideTaggedTime.name = "hide_delay";
+		hideTaggedTime.size = 6;
+		hideTaggedTime.value = hide_delay;
+		$(hideTaggedTime).css('padding', '1px');
+		liOption.appendChild(hideTaggedTime);
+		$(hideTaggedTime).before("<br/>&nbsp;└ Thumbnail fade-off time in seconds: ");
+		ulOptions.appendChild(liOption);
+
+		liOption = document.createElement("li");
+
+		var hideBlklstChk = document.createElement("input");
+		hideBlklstChk.setAttribute("type", "checkbox");
+		hideBlklstChk.name = "hide_blacklisted";
+		hideBlklstChk.checked = hide_blacklisted;
+		liOption.appendChild(hideBlklstChk);
+		$(hideBlklstChk).after(" Hide blacklisted images");
+		ulOptions.appendChild(liOption);
+
+		liOption = document.createElement("li");
+
+		var hideDeletedChk = document.createElement("input");
+		hideDeletedChk.setAttribute("type", "checkbox");
+		hideDeletedChk.name = "hide_deleted";
+		hideDeletedChk.checked = hide_deleted;
+		liOption.appendChild(hideDeletedChk);
+		$(hideDeletedChk).after(" Hide deleted images");
+		ulOptions.appendChild(liOption);
+
+		liOption = document.createElement("li");
+
+		var biggerPgBtnChk = document.createElement("input");
+		biggerPgBtnChk.setAttribute("type", "checkbox");
+		biggerPgBtnChk.name = "bigger_pagebuttons";
+		biggerPgBtnChk.checked = bigger_pagebuttons;
+		//mainMenu.appendChild(biggerPgBtnChk);
+		liOption.appendChild(biggerPgBtnChk);
+		$(biggerPgBtnChk).after(" Increase by 50% the size of bottom page navigation buttons");
+		ulOptions.appendChild(liOption);
+
+		mainMenu.appendChild(ulOptions);
+
+		$(ulOptions).after("<br/>");
+
+		var center = document.createElement("center");
+
+		var refreshChk = document.createElement("input");
+		refreshChk.setAttribute("type", "checkbox");
+		refreshChk.name = "refresh_onsave";
+		refreshChk.checked = refresh_onsave;
+		center.appendChild(refreshChk);
+		$(refreshChk).after(" Refresh page after saving<br/>");
+
+		var btnSave = document.createElement("button");
+		btnSave.innerHTML = "Save";
+		$(btnSave).css({cursor: 'pointer', margin: '3px'});
+		btnSave.addEventListener("click", function()
+		{
+			var ftMenu = document.getElementById("fasttagger-menu");
+
+			var encodeSettings = "custom_button=" + $('input[name="custom_button"]', ftMenu).first().prop("checked") + "&";
+			encodeSettings += "custom_text=" + encodeURIComponent($('input[name="custom_text"]', ftMenu).first().val()) + "&";
+
+			encodeSettings += "hide_tagged=" + $('input[name="hide_tagged"]', ftMenu).first().prop("checked") + "&";
+			hide_delay = parseFloat($('input[name="hide_delay"]', ftMenu).first().val());
+			if(hide_delay == "NaN") hide_delay = 0.25;
+			encodeSettings += "hide_delay=" + hide_delay + "&";
+
+			encodeSettings += "hide_blacklisted=" + $('input[name="hide_blacklisted"]', ftMenu).first().prop("checked") + "&";
+
+			encodeSettings += "hide_deleted=" + $('input[name="hide_deleted"]', ftMenu).first().prop("checked") + "&";
+
+			encodeSettings += "bigger_pagebuttons=" + $('input[name="bigger_pagebuttons"]', ftMenu).first().prop("checked") + "&";
+
+			encodeSettings += "refresh_onsave=" + $('input[name="refresh_onsave"]', ftMenu).first().prop("checked");
+
+			$("#fasttagger-menu table.ft-table tbody tr").each(function(i) {
+				$("input", this).each(function(j) {
+					encodeSettings += "&button-"+i+"-"+j+"=" + encodeURIComponent(this.value);
+				});
+			});
+
+			GM_setValue("FastTagger_settings", encodeSettings);
+
+			$('#fasttagger-menu').remove();
+
+			refresh_onsave = $('input[name="refresh_onsave"]', ftMenu).first().prop("checked");
+			if(refresh_onsave) location.reload();
+
+		}, false);
+		center.appendChild(btnSave);
+
+		var btnCancel = document.createElement("button");
+		btnCancel.innerHTML = "Cancel";
+		$(btnCancel).css({cursor: 'pointer', margin: '3px'});
+		btnCancel.addEventListener("click", function() { $('#fasttagger-menu').remove() }, false);
+		center.appendChild(btnCancel);
+
+		mainMenu.appendChild(center);
+
+		midMenu.appendChild(mainMenu);
+		menu.appendChild(midMenu);
+		$('body').append(menu);
+	}
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Main event //////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+function main()
+{
+	// Check for errors in the buttontags array
+	if (typeof buttontags == "object")
+	{
+		if (buttontags.length > 0)
+		{
+			for (i = 0; i < buttontags.length; i++)
+			{
+				if (typeof buttontags[i] == "object")
+				{
+					if (buttontags[i].length == 2)
+					{
+						for (j = 0; j < buttontags[i].length; j++)
+						{
+							if (typeof buttontags[i][j] == "string" || typeof buttontags[i][j] == "number")
+							{
+								if (!$.trim(buttontags[i][j]))
+								{
+									//err("strlen"); return;
+								}
+							}
+							else { err("type"); return; }
+						}
+					}
+					else { err("sublen"); return; }
+				}
+				else { err("syn"); return; }
+			}
+		}
+		else { err("len"); return; }
+	}
+	else { err("syn"); return; }
+
+
+	var thumbs = document.getElementsByClassName("thumb");
+
+	// Hides deleted posts
+	for (i = 0; i < thumbs.length; i++)
+	{
+		var t = thumbs[i];
+		var a = t.getElementsByTagName("a")[0];
+		var img = a.getElementsByTagName("img")[0];
+
+		if (hide_deleted && img.className.indexOf("flagged") != -1)
+		{
+			$(t).css('display', 'none');
+		}
+
+		// Apply red borders on "solo male" pictures without the "solo_male" tag
+		/*img.alt = " " + img.alt + " "; // (sometimes not done server-side)
+		var malesolo = / male (\S+ )*solo /;
+		var solomale = / solo_male /;
+
+		//var male = / (male|m(an|en)|\S*boy(s?)|\S*dick|\S*cock|\S*penis|muscle(s?)|buff) /;
+		//var female = / (\S*female|\S*wom(an|en)|\S*girl(s?)|\S*breasts|\S*tits|\S*boobs|vagina|pussy) /;
+
+		if ((malesolo.test(img.alt) && !solomale.test(img.alt))) // || (male.test(img.alt) && !female.test(img.alt)))
+		{
+			//$(img).css('border', '5px solid red');
+			$(t).css('display', 'none');
+		}*/
+	}
+
+	//////////////////////////////////////////////////////////////////////////////////////////
+
+	// Applies tag buttons under each thumbnail
+	for (i = 0; i < thumbs.length; i++)
+	{
+		var t = thumbs[i];
+		var tags = t.getElementsByTagName("img")[0].alt;
+		//var match = / male (\S+ )*solo | solo_male | yaoi /igm;
+		if (t.className.indexOf("blacklisted-image") == -1) //&& !match.test(tags))
+		{
+
+			var div = document.createElement("div");
+			div.id = "buttons"+i;
+			div.className = "buttontags";
+			$(div).css('padding', '3px 0');
+			//div.style.visibility = "hidden";
+			t.appendChild(div);
+
+			if (isLoggedIn())
+			{
+				var btn = document.createElement("button");
+				//btn.type = "button";
+				btn.innerHTML = "- Add tags -";
+				btn.className = "show";
+				//$(btn).css('font-size', '8pt');
+				$(btn).css({visibility: 'hidden', width: '96.363636%'}); //, cursor: 'pointer'});
+				btn.addEventListener("click", function()
+				{
+					$(this).css('display', 'none');
+					$('span', this.parentNode).css('display', 'inline');
+				}, false);
+				div.appendChild(btn);
+
+				var span = document.createElement("span");
+				$(span).css('display', 'none');
+				//div.style.visibility = "hidden";
+				div.appendChild(span);
+
+				/*
+				var bsm = document.createElement("button");
+				bsm.setAttribute("id", "btn-solomale"+i);
+				bsm.setAttribute("name", "solomale"+i);
+				bsm.setAttribute("type", "button");
+				$(bsm).html("solo_male");
+				$(bsm).css('font-size', '8pt');
+				$(bsm).css('visibility', 'hidden');
+				bsm.addEventListener("click", function() { press("s", this.parentNode.parentNode, this.parentNode, this); }, false);
+				div.appendChild(bsm);
+
+				var by = document.createElement("button");
+				by.setAttribute("id", "btn-yaoi"+i);
+				by.setAttribute("name", "yaoi"+i);
+				by.setAttribute("type", "button");
+				$(by).html("yaoi");
+				$(by).css('font-size', '8pt');
+				$(by).css('visibility', 'hidden');
+				by.addEventListener("click", function() { press("y", this.parentNode.parentNode, this.parentNode, this); }, false);
+				div.appendChild(by);
+
+				var bf = document.createElement("button");
+				bf.setAttribute("id", "btn-futa"+i);
+				bf.setAttribute("name", "futa"+i);
+				bf.setAttribute("type", "button");
+				$(bf).html("futa");
+				$(bf).css('font-size', '8pt');
+				$(bf).css('visibility', 'hidden');
+				bf.addEventListener("click", function() { press("f", this.parentNode.parentNode, this.parentNode, this); }, false);
+				div.appendChild(bf);
+				*/
+
+
+				for (j = 0; j < buttontags.length; j++)
+				{
+					btn = document.createElement("button");
+					//btn.id = "btn-" + buttontags[j][0] + i;
+					//btn.name = buttontags[j][0] + i;
+					//btn.type = "button";
+					//$(btn).css('cursor', 'pointer');
+					btn.index = j;
+					btn.innerHTML = buttontags[j][0];
+					//$(btn).css('font-size', '8pt');
+					//$(btn).css('visibility', 'hidden');
+					btn.addEventListener("click", function() { press(this) }, false);
+					span.appendChild(btn);
+				}
+
+				if (custom_button)
+				{
+					btn = document.createElement("button");
+					//btn.name = "custom";
+					//btn.type = "button";
+					//$(btn).css('cursor', 'pointer');
+					btn.innerHTML = "<i>" + custom_text + "</i>";
+					//$(btn).css('font-size', '8pt');
+					btn.addEventListener("click", function() { press(this, prompt("Enter custom tags:                                                                                                    ")) }, false);
+					span.appendChild(btn);
+				}
+			}
+			else
+			{
+				var link = document.createElement("a");
+				link.href = "index.php?page=account&s=login&code=00";
+				link.innerHTML = "Login to edit tags";
+				link.className = "show";
+				//$(link).css('font-size', '8pt');
+				$(link).css('visibility', 'hidden');
+				div.appendChild(link);
+			}
+
+			$(div).bind('mouseenter', function()
+			{
+				$('.show', this).css('visibility', 'visible');
+				$(this.parentNode).css('background-color', 'rgba(255, 255, 255, 0.667)');
+			});
+			$(div).bind('mouseleave', function()
+			{
+				$('.show', this).css({'visibility': 'hidden', 'display': 'inline'});
+				$('span', this).css('display','none');
+				$(this.parentNode).css('background-color', 'transparent');
+			});
+		}
+	}
+
+	var li = document.createElement("li");
+	var ftsets = document.createElement("a");
+	ftsets.innerHTML = "[FastTagger Settings]";
+	ftsets.href = "#";
+	ftsets.addEventListener("click", function() { settingsMenu() }, false);
+	li.appendChild(ftsets);
+	$('#subnavbar').append(li);
+
+	if (location.search.indexOf("page=post&s=view&id=") != -1)
+	{
+		// Fix post ID not always in image URL
+		var imgSrcRegex = /\?[0-9]+$/;
+		var postIdRegex = /&id=([0-9]+)/;
+		var postId = postIdRegex.exec(location.href);
+
+		var img = $('#image');
+		var imgUrl = img.attr("src");
+
+		if (!imgSrcRegex.test(img.attr("src")))
+		{
+			img.attr("src", imgUrl + "?" + postId[1]);
+		}
+
+		var origLink = $('.sidebar a:contains(Original image)');
+		var origLinkUrl = origLink.attr("href");
+
+		if (!imgSrcRegex.test(origLinkUrl))
+		{
+			origLink.attr("href", origLinkUrl + "?" + postId[1]);
+		}
+
+		// Make image clickable
+		var imgLink = document.createElement("a");
+		imgLink.href = origLink.attr("href");
+		$('#image').wrap(imgLink);
+	}
+}
+
+function getSettings()
+{
+	var retrieveSettings = GM_getValue("FastTagger_settings");
+	if (retrieveSettings != null && retrieveSettings != "")
+	{
+		buttontags = [];
+		var hashes = retrieveSettings.split('&');
+
+		for (var i = 0; i < hashes.length; i++)
+		{
+			var hash = hashes[i].split('=');
+
+			switch (hash[0])
+			{
+				case "custom_button":
+					custom_button = (hash[1] == "false") ? false : true;
+					break;
+
+				case "custom_text":
+					custom_text = decodeURIComponent(hash[1]);
+					break;
+
+				case "hide_tagged":
+					hide_tagged = (hash[1] == "false") ? false : true;
+					break;
+
+				case "hide_delay":
+					hide_delay = parseFloat(hash[1]);
+					break;
+
+				case "hide_blacklisted":
+					hide_blacklisted = (hash[1] == "false") ? false : true;
+					break;
+
+				case "hide_deleted":
+					hide_deleted = (hash[1] == "false") ? false : true;
+					break;
+
+				case "bigger_pagebuttons":
+					bigger_pagebuttons = (hash[1] == "false") ? false : true;
+					break;
+
+				case "refresh_onsave":
+					refresh_onsave = (hash[1] == "false") ? false : true;
+					break;
+
+				default:
+					if(hash[0].lastIndexOf("button", 0) == 0)
+					{
+						var iFirst = parseInt(hash[0].substring(hash[0].indexOf("-") + 1, hash[0].lastIndexOf("-")));
+						var iSecond = parseInt(hash[0].substring(hash[0].lastIndexOf("-") + 1));
+
+						if(iSecond == 0) buttontags.push(["",""]);
+
+						buttontags[iFirst][iSecond] = decodeURIComponent(hash[1]);
+					}
+					break;
+			}
+		}
+	}
+}
+
+if (!isError)
+{
+	var statusMsg = $('body h1').html();
+
+	if (statusMsg != null)
+	{
+		statusMsg = statusMsg.toLowerCase();
+
+		if (statusMsg.indexOf("search is overloaded") != -1 || statusMsg.indexOf("website is offline") != -1)
+			setTimeout(location.reload, 1000);
+	}
+	else
+	{
+		getSettings();
+		stylesheet();
+		main();
+	}
+}
