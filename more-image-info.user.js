@@ -2,7 +2,7 @@
 // @name         Rule34.xxx: File Size
 // @namespace    http://tampermonkey.net/
 // @version      1.2
-// @description  Shows image size on the statistics pane
+// @description  Shows file size of images/videos on the statistics pane
 // @author       mja00
 // @match        https://rule34.xxx/index.php?page=post&s=view&id=*
 // @icon         https://www.google.com/s2/favicons?domain=rule34.xxx
