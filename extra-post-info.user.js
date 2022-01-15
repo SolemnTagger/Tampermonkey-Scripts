@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         Rule34.xxx: File Size
+// @name         Rule34.xxx: Extra Post Info
 // @namespace    http://tampermonkey.net/
 // @version      1.2
 // @description  Shows file size of images/videos on the statistics pane
